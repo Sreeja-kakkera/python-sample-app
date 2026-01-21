@@ -1,0 +1,56 @@
+name: Dockerfile scan and build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  scan-and-build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Scan Dockerfile base image
+        id: scan
+        run: |
+          set -euo pipefail
+          if [ ! -f Dockerfile ]; then
+            echo "Dockerfile not found" >&2
+            exit 1
+          fi
+
+          # Capture FROM lines (supporting multi-stage Dockerfiles)
+          mapfile -t from_lines < <(grep -iE '^\s*FROM\s+' Dockerfile || true)
+          if [ ${#from_lines[@]} -eq 0 ]; then
+            echo "No FROM instruction found in Dockerfile" >&2
+            exit 1
+          fi
+
+          echo "Found FROM lines:" 
+          printf '%s\n' "${from_lines[@]}"
+
+          # Normalize image names (remove AS stage aliases)
+          images=$(printf '%s\n' "${from_lines[@]}" | sed -E 's/^\s*FROM\s+([^[:space:]]+).*/\1/I')
+
+          # Rule 1: If any base image is exactly python:3.9-slim or starts with python:3.9-slim-
+          if echo "$images" | grep -qiE '^python:3\.9-slim([\.-].*|$)'; then
+            echo "::error title=Invalid base image::Dockerfile uses a disallowed base image 'python:3.9-slim*'. Please update to a supported Python base (e.g., python:3.12-slim) or a non-Python base." 
+            exit 2
+          fi
+
+          # Rule 2: If none of the base images start with python:, allow build to proceed as non-Python base
+          if ! echo "$images" | grep -qiE '^python:'; then
+            echo "Base image is not from the python family; proceeding with build."
+          else
+            echo "Python base image detected (but not 3.9-slim); proceeding with build."
+          fi
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        run: |
+          docker build -t sample-app:ci .
