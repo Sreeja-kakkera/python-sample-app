@@ -1,0 +1,58 @@
+name: Docker Build and Scan
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  scan-and-build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Validate Dockerfile and base image rules
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! -f Dockerfile ]]; then
+            echo "Dockerfile not found at repository root" >&2
+            exit 1
+          fi
+
+          # Extract first FROM line ignoring comments and whitespace
+          from_line=$(grep -iE "^\s*FROM\s+" Dockerfile | head -n1 || true)
+          if [[ -z "$from_line" ]]; then
+            echo "No FROM instruction found in Dockerfile" >&2
+            exit 1
+          fi
+
+          echo "Detected: $from_line"
+
+          # Normalize to lowercase for checks
+          from_lc=$(echo "$from_line" | tr '[:upper:]' '[:lower:]')
+
+          # Fail if it contains python:3.9-slim (exact tag match or with suffixes like -bookworm)
+          if echo "$from_lc" | grep -qE "from\s+python:3\.9-slim(\b|-)"; then
+            echo "ERROR: python:3.9-slim base image is disallowed. Please upgrade to a supported Python version (e.g., python:3.11-slim)." >&2
+            exit 2
+          fi
+
+          # Determine if base is from python family
+          if echo "$from_lc" | grep -qE "from\s+python[:@]"; then
+            echo "Base image is Python family and not 3.9-slim; proceeding."
+          else
+            echo "Base image is not from Python family; proceeding as requested."
+          fi
+
+      - name: Build Docker image
+        run: |
+          IMAGE_NAME="python-sample-app"
+          docker build -t "$IMAGE_NAME:ci" .
