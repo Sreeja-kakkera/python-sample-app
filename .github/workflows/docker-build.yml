@@ -1,0 +1,60 @@
+name: Docker Build and Dockerfile Scan
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  scan-and-build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Scan Dockerfile for disallowed base image
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ ! -f Dockerfile ]; then
+            echo "Dockerfile not found at repository root. Failing."
+            exit 1
+          fi
+
+          echo "Checking Dockerfile FROM instructions..."
+          FROM_LINES=$(grep -iE '^[[:space:]]*FROM[[:space:]]+' Dockerfile || true)
+          if [ -z "$FROM_LINES" ]; then
+            echo "No FROM instruction found in Dockerfile. Failing."
+            exit 1
+          fi
+
+          echo "$FROM_LINES"
+
+          # Fail if any FROM uses python:3.12-slim-bookworm
+          if echo "$FROM_LINES" | grep -qi 'python:3\.12-slim-bookworm'; then
+            echo "::error title=Disallowed base image detected::The Dockerfile uses python:3.12-slim-bookworm, which is not allowed. Please use a different base image."
+            exit 1
+          fi
+
+          # Informational: if base image is not from the python family, proceed
+          if ! echo "$FROM_LINES" | grep -qi 'python:'; then
+            echo "Base image is not from the python family. Proceeding to build."
+          else
+            echo "Python base image detected (not 3.12-slim-bookworm). Proceeding to build."
+          fi
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        shell: bash
+        run: |
+          set -euo pipefail
+          IMAGE_NAME="python-sample-app"
+          IMAGE_TAG="${GITHUB_SHA::7}"
+          echo "Building image: ${IMAGE_NAME}:${IMAGE_TAG}"
+          docker build -t "${IMAGE_NAME}:${IMAGE_TAG}" .
