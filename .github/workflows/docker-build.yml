@@ -1,0 +1,52 @@
+name: Dockerfile Scan and Build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  scan-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate Dockerfile presence
+        run: |
+          test -f Dockerfile || { echo "::error::Dockerfile not found at repo root"; exit 1; }
+
+      - name: Scan Dockerfile base image
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Extract first FROM line (handles multi-stage by checking the first stage only as base)
+          base_line=$(grep -iE "^\s*FROM\s+" Dockerfile | head -n1 || true)
+          if [[ -z "${base_line}" ]]; then
+            echo "::error::No FROM instruction found in Dockerfile";
+            exit 1
+          fi
+
+          # Normalize line for case-insensitive checks
+          base_image=$(echo "$base_line" | awk '{print $2}')
+          echo "Detected base image: $base_image"
+
+          # 4) Fail if python:3.9-slim is used anywhere in FROM
+          if echo "$base_image" | grep -qiE '^python:3\.9-slim(\b|$)'; then
+            echo "::error::Disallowed base image detected: python:3.9-slim. Please upgrade to a supported Python base image (e.g., python:3.11-slim or later).";
+            exit 1
+          fi
+
+          # 5) If base image is not from the python family, proceed (we just log and continue)
+          if ! echo "$base_image" | grep -qi '^python:'; then
+            echo "Base image is not from python family; proceeding with build.";
+          fi
+
+      - name: Log in to DockerHub (optional, required only for push)
+        if: false
+        run: echo "placeholder for registry login if needed"
+
+      - name: Build Docker image
+        run: |
+          IMAGE_TAG=${{ github.repository_owner }}/$(basename ${{ github.repository }}):${{ github.sha }}
+          echo "Building $IMAGE_TAG"
+          docker build -t "$IMAGE_TAG" .
