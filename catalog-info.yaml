@@ -1,0 +1,10 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: python-sample-app
+  annotations:
+    github.com/project-slug: Sreeja-kakkera/python-sample-app
+spec:
+  type: other
+  lifecycle: unknown
+  owner: team-devops
